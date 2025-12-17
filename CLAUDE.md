@@ -119,6 +119,11 @@ require("vibing").setup({
 | `:VibingContext [path]` | Add file to context |
 | `:VibingClearContext` | Clear all context |
 | `:VibingInline [action]` | Run inline action on selection (fix/feat/explain/refactor/test) |
+| `:VibingExplain` | Explain selected code |
+| `:VibingFix` | Fix selected code issues |
+| `:VibingFeature` | Implement feature in selected code |
+| `:VibingRefactor` | Refactor selected code |
+| `:VibingTest` | Generate tests for selected code |
 | `:VibingCancel` | Cancel current request |
 | `:VibingOpenChat <file>` | Open saved chat file |
 
