@@ -1,0 +1,485 @@
+local Context = require("vibing.context")
+
+---@class Vibing.ChatBuffer
+---@field buf number?
+---@field win number?
+---@field config Vibing.ChatConfig
+---@field session_id string?
+---@field file_path string?
+local ChatBuffer = {}
+ChatBuffer.__index = ChatBuffer
+
+---@param config Vibing.ChatConfig
+---@return Vibing.ChatBuffer
+function ChatBuffer:new(config)
+  local instance = setmetatable({}, ChatBuffer)
+  instance.buf = nil
+  instance.win = nil
+  instance.config = config
+  instance.session_id = nil
+  instance.file_path = nil
+  return instance
+end
+
+---チャットウィンドウを開く
+function ChatBuffer:open()
+  if self:is_open() then
+    vim.api.nvim_set_current_win(self.win)
+    return
+  end
+
+  self:_create_buffer()
+  self:_create_window()
+  self:_setup_keymaps()
+  self:_init_content()
+end
+
+---チャットウィンドウを閉じる
+function ChatBuffer:close()
+  if self.win and vim.api.nvim_win_is_valid(self.win) then
+    vim.api.nvim_win_close(self.win, true)
+  end
+  self.win = nil
+end
+
+---ウィンドウが開いているか
+---@return boolean
+function ChatBuffer:is_open()
+  return self.win ~= nil and vim.api.nvim_win_is_valid(self.win)
+end
+
+---バッファを作成
+function ChatBuffer:_create_buffer()
+  if self.buf and vim.api.nvim_buf_is_valid(self.buf) then
+    return
+  end
+
+  self.buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[self.buf].buftype = ""  -- 通常バッファ（保存可能）
+  vim.bo[self.buf].filetype = "markdown"
+  vim.bo[self.buf].modifiable = true
+  vim.bo[self.buf].swapfile = false
+
+  -- ファイルパスが設定されている場合はそれを使う
+  if self.file_path then
+    vim.api.nvim_buf_set_name(self.buf, self.file_path)
+  else
+    -- 新規の場合はプロジェクトの.vibing/chat/に保存
+    local project_root = vim.fn.getcwd()
+    local default_path = project_root .. "/.vibing/chat/"
+    vim.fn.mkdir(default_path, "p")
+    local filename = os.date("chat-%Y%m%d-%H%M%S.md")
+    self.file_path = default_path .. filename
+    vim.api.nvim_buf_set_name(self.buf, self.file_path)
+  end
+end
+
+---ウィンドウを作成
+function ChatBuffer:_create_window()
+  local win_config = self.config.window
+  local width = math.floor(vim.o.columns * win_config.width)
+
+  if win_config.position == "right" then
+    vim.cmd("botright vsplit")
+    vim.cmd("vertical resize " .. width)
+  elseif win_config.position == "left" then
+    vim.cmd("topleft vsplit")
+    vim.cmd("vertical resize " .. width)
+  else
+    -- float
+    local height = math.floor(vim.o.lines * 0.8)
+    local row = math.floor((vim.o.lines - height) / 2)
+    local col = math.floor((vim.o.columns - width) / 2)
+
+    self.win = vim.api.nvim_open_win(self.buf, true, {
+      relative = "editor",
+      width = width,
+      height = height,
+      row = row,
+      col = col,
+      style = "minimal",
+      border = win_config.border,
+    })
+    return
+  end
+
+  self.win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(self.win, self.buf)
+end
+
+---キーマップを設定
+function ChatBuffer:_setup_keymaps()
+  local vibing = require("vibing")
+  local keymaps = vibing.get_config().keymaps
+
+  vim.keymap.set("n", keymaps.send, function()
+    self:send_message()
+  end, { buffer = self.buf, desc = "Send message" })
+
+  vim.keymap.set("n", keymaps.cancel, function()
+    local adapter = vibing.get_adapter()
+    if adapter then
+      adapter:cancel()
+    end
+  end, { buffer = self.buf, desc = "Cancel request" })
+
+  vim.keymap.set("n", keymaps.add_context, function()
+    vim.ui.input({ prompt = "Add context: ", completion = "file" }, function(path)
+      if path then
+        Context.add(path)
+        self:_update_context_line()
+      end
+    end)
+  end, { buffer = self.buf, desc = "Add context" })
+
+  vim.keymap.set("n", "q", function()
+    self:close()
+  end, { buffer = self.buf, desc = "Close chat" })
+end
+
+---初期コンテンツを設定
+function ChatBuffer:_init_content()
+  local lines = {
+    "---",
+    "vibing.nvim: true",
+    "session_id: ",
+    "created_at: " .. os.date("%Y-%m-%dT%H:%M:%S"),
+    "---",
+    "",
+    "# Vibing Chat",
+    "",
+    "Context: " .. Context.format_for_display(),
+    "",
+    "---",
+    "",
+    "## User",
+    "",
+  }
+  vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, lines)
+  vim.api.nvim_win_set_cursor(self.win, { #lines, 0 })
+end
+
+---コンテキスト行を更新
+function ChatBuffer:_update_context_line()
+  local lines = vim.api.nvim_buf_get_lines(self.buf, 0, 10, false)
+  for i, line in ipairs(lines) do
+    if line:match("^Context:") then
+      vim.api.nvim_buf_set_lines(
+        self.buf,
+        i - 1,
+        i,
+        false,
+        { "Context: " .. Context.format_for_display() }
+      )
+      break
+    end
+  end
+end
+
+---YAMLフロントマターをパース
+---@return table<string, string>
+function ChatBuffer:parse_frontmatter()
+  if not self.buf or not vim.api.nvim_buf_is_valid(self.buf) then
+    return {}
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(self.buf, 0, 20, false)
+  local frontmatter = {}
+  local in_frontmatter = false
+  local frontmatter_end = 0
+
+  for i, line in ipairs(lines) do
+    if i == 1 and line == "---" then
+      in_frontmatter = true
+    elseif in_frontmatter and line == "---" then
+      frontmatter_end = i
+      break
+    elseif in_frontmatter then
+      local key, value = line:match("^([%w_]+):%s*(.*)$")
+      if key then
+        frontmatter[key] = value
+      end
+    end
+  end
+
+  return frontmatter
+end
+
+---フロントマターのsession_idを更新
+---@param session_id string
+function ChatBuffer:update_session_id(session_id)
+  if not self.buf or not vim.api.nvim_buf_is_valid(self.buf) then
+    return
+  end
+
+  self.session_id = session_id
+
+  local lines = vim.api.nvim_buf_get_lines(self.buf, 0, 10, false)
+  for i, line in ipairs(lines) do
+    if line:match("^session_id:") then
+      vim.api.nvim_buf_set_lines(
+        self.buf,
+        i - 1,
+        i,
+        false,
+        { "session_id: " .. session_id }
+      )
+      return
+    end
+  end
+end
+
+---保存されたチャットファイルを読み込む
+---@param file_path string
+---@return boolean success
+function ChatBuffer:load_from_file(file_path)
+  if not vim.fn.filereadable(file_path) then
+    return false
+  end
+
+  self.file_path = file_path
+  self:_create_buffer()
+
+  local content = vim.fn.readfile(file_path)
+  vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, content)
+
+  local frontmatter = self:parse_frontmatter()
+  if frontmatter.session_id and frontmatter.session_id ~= "" then
+    self.session_id = frontmatter.session_id
+  end
+
+  return true
+end
+
+---セッションIDを取得
+---@return string?
+function ChatBuffer:get_session_id()
+  return self.session_id
+end
+
+---会話履歴全体を抽出
+---@return {role: string, content: string}[]
+function ChatBuffer:extract_conversation()
+  local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
+  local conversation = {}
+  local current_role = nil
+  local current_content = {}
+
+  for _, line in ipairs(lines) do
+    if line:match("^## User") then
+      -- 前のセクションを保存
+      if current_role and #current_content > 0 then
+        table.insert(conversation, {
+          role = current_role,
+          content = vim.trim(table.concat(current_content, "\n"))
+        })
+      end
+      current_role = "user"
+      current_content = {}
+    elseif line:match("^## Assistant") then
+      -- 前のセクションを保存
+      if current_role and #current_content > 0 then
+        table.insert(conversation, {
+          role = current_role,
+          content = vim.trim(table.concat(current_content, "\n"))
+        })
+      end
+      current_role = "assistant"
+      current_content = {}
+    elseif current_role and not line:match("^#") and not line:match("^---") and not line:match("^Context:") then
+      table.insert(current_content, line)
+    end
+  end
+
+  -- 最後のセクションを保存
+  if current_role and #current_content > 0 then
+    local content = vim.trim(table.concat(current_content, "\n"))
+    if content ~= "" then
+      table.insert(conversation, {
+        role = current_role,
+        content = content
+      })
+    end
+  end
+
+  return conversation
+end
+
+---ユーザーメッセージを抽出（最後の## Userセクションから）
+---@return string?
+function ChatBuffer:extract_user_message()
+  local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
+  local last_user_line = nil
+
+  -- 最後の "## User" 行を見つける
+  for i = #lines, 1, -1 do
+    if lines[i]:match("^## User") then
+      last_user_line = i
+      break
+    end
+  end
+
+  if not last_user_line then
+    return nil
+  end
+
+  -- ## User の次の行からメッセージを収集
+  local message_lines = {}
+  for i = last_user_line + 1, #lines do
+    local line = lines[i]
+    -- 次のセクションに達したら終了
+    if line:match("^## ") or line:match("^---") then
+      break
+    end
+    table.insert(message_lines, line)
+  end
+
+  -- 空行を除去
+  while #message_lines > 0 and message_lines[1] == "" do
+    table.remove(message_lines, 1)
+  end
+  while #message_lines > 0 and message_lines[#message_lines] == "" do
+    table.remove(message_lines)
+  end
+
+  if #message_lines == 0 then
+    return nil
+  end
+
+  return table.concat(message_lines, "\n")
+end
+
+---メッセージを送信
+function ChatBuffer:send_message()
+  local message = self:extract_user_message()
+  if not message then
+    vim.notify("[vibing] No message to send", vim.log.levels.WARN)
+    return
+  end
+
+  require("vibing.actions.chat").send(self, message)
+end
+
+-- スピナーフレーム
+local spinner_frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+
+---アシスタントの応答を追加開始
+function ChatBuffer:start_response()
+  local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
+  local new_lines = {
+    "",
+    "## Assistant",
+    "",
+  }
+  vim.api.nvim_buf_set_lines(self.buf, #lines, #lines, false, new_lines)
+  self:start_spinner()
+end
+
+---スピナーを開始
+function ChatBuffer:start_spinner()
+  if self._spinner_timer then
+    return -- 既に動作中
+  end
+
+  self._spinner_frame = 1
+  self._spinner_line = vim.api.nvim_buf_line_count(self.buf)
+  self._first_chunk_received = false
+
+  -- 初期スピナー表示
+  vim.api.nvim_buf_set_lines(
+    self.buf,
+    self._spinner_line - 1,
+    self._spinner_line,
+    false,
+    { spinner_frames[1] .. " Thinking..." }
+  )
+
+  -- タイマーでスピナーをアニメーション
+  self._spinner_timer = vim.uv.new_timer()
+  self._spinner_timer:start(0, 100, vim.schedule_wrap(function()
+    if not self.buf or not vim.api.nvim_buf_is_valid(self.buf) then
+      self:stop_spinner()
+      return
+    end
+
+    if self._first_chunk_received then
+      self:stop_spinner()
+      return
+    end
+
+    self._spinner_frame = (self._spinner_frame % #spinner_frames) + 1
+    pcall(vim.api.nvim_buf_set_lines, self.buf, self._spinner_line - 1, self._spinner_line, false, {
+      spinner_frames[self._spinner_frame] .. " Thinking..."
+    })
+  end))
+end
+
+---スピナーを停止
+function ChatBuffer:stop_spinner()
+  if self._spinner_timer then
+    self._spinner_timer:stop()
+    self._spinner_timer:close()
+    self._spinner_timer = nil
+  end
+
+  -- スピナー行をクリア
+  if self._spinner_line and self.buf and vim.api.nvim_buf_is_valid(self.buf) then
+    local current_line = vim.api.nvim_buf_get_lines(self.buf, self._spinner_line - 1, self._spinner_line, false)[1] or ""
+    if current_line:match("^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]") then
+      vim.api.nvim_buf_set_lines(self.buf, self._spinner_line - 1, self._spinner_line, false, { "" })
+    end
+  end
+  self._spinner_line = nil
+end
+
+---ストリーミングチャンクを追加
+---@param chunk string
+function ChatBuffer:append_chunk(chunk)
+  -- 最初のチャンクでスピナーを停止
+  if not self._first_chunk_received then
+    self._first_chunk_received = true
+    self:stop_spinner()
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
+  local last_line = lines[#lines] or ""
+
+  -- チャンクに改行が含まれる場合
+  local chunk_lines = vim.split(chunk, "\n", { plain = true })
+  chunk_lines[1] = last_line .. chunk_lines[1]
+
+  vim.api.nvim_buf_set_lines(self.buf, #lines - 1, #lines, false, chunk_lines)
+
+  -- カーソルを最下部に移動
+  if self:is_open() then
+    local new_lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
+    vim.api.nvim_win_set_cursor(self.win, { #new_lines, 0 })
+  end
+end
+
+---新しいユーザー入力セクションを追加
+function ChatBuffer:add_user_section()
+  -- スピナーが残っていれば停止
+  self:stop_spinner()
+  self._first_chunk_received = false
+
+  local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
+  local new_lines = {
+    "",
+    "## User",
+    "",
+  }
+  vim.api.nvim_buf_set_lines(self.buf, #lines, #lines, false, new_lines)
+
+  if self:is_open() then
+    local total = vim.api.nvim_buf_line_count(self.buf)
+    vim.api.nvim_win_set_cursor(self.win, { total, 0 })
+  end
+end
+
+---@return number?
+function ChatBuffer:get_buffer()
+  return self.buf
+end
+
+return ChatBuffer
