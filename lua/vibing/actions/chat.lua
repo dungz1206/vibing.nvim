@@ -121,11 +121,10 @@ function M.send(chat_buffer, message)
   )
 
   -- セッションIDを同期（chat_buffer → adapter）
+  -- 新規チャット（session_id未設定）の場合は明示的にnilを設定して新しいセッションを開始
   if adapter:supports("session") then
     local saved_session = chat_buffer:get_session_id()
-    if saved_session then
-      adapter:set_session_id(saved_session)
-    end
+    adapter:set_session_id(saved_session)
   end
 
   -- 最初のメッセージの場合、ファイル名を更新
