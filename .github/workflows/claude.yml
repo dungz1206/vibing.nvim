@@ -51,4 +51,5 @@ jobs:
             - Write the PR body in Japanese with clear description of changes
             - Include "fixes #<issue-number>" if there's a related issue
 
-          claude_args: '--allowed-tools "Bash(git:*),Bash(gh pr:*),Bash(gh issue:*)"'
+          # Allow file operations and git/gh commands for implementation tasks
+          allowed_tools: 'Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh:*),Bash(npm:*)'
