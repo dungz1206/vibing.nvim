@@ -9,6 +9,7 @@
 ---@field keymaps Vibing.KeymapConfig キーマップ設定（送信、キャンセル、コンテキスト追加）
 ---@field permissions Vibing.PermissionsConfig ツール権限設定（許可/拒否リスト）
 ---@field remote Vibing.RemoteConfig リモート制御設定（ソケットパス、自動検出）
+---@field language? string|Vibing.LanguageConfig AI応答のデフォルト言語（"ja", "en"等、またはLanguageConfig）
 
 ---@class Vibing.PermissionRule
 ---粒度の細かい権限制御ルール
@@ -72,8 +73,16 @@
 ---@field open_diff string ファイルパス上でdiff表示キー（デフォルト: "gd"）
 ---@field open_file string ファイルパス上でファイルを開くキー（デフォルト: "gf"）
 
+---@class Vibing.LanguageConfig
+---言語設定（詳細）
+---chat と inline で異なる言語を指定可能
+---@field default? string デフォルト言語（"ja", "en", "zh", "ko", "fr", "de", "es"等）
+---@field chat? string chatアクションでの言語（指定されていない場合はdefaultを使用）
+---@field inline? string inlineアクションでの言語（指定されていない場合はdefaultを使用）
+
 local notify = require("vibing.utils.notify")
 local tools_const = require("vibing.constants.tools")
+local language_utils = require("vibing.utils.language")
 
 local M = {}
 
@@ -124,6 +133,7 @@ M.defaults = {
     socket_path = nil,  -- Auto-detect from NVIM env variable
     auto_detect = true,
   },
+  language = nil,  -- No language specification by default (responds in English)
 }
 
 ---@type Vibing.Config
@@ -157,6 +167,28 @@ function M.setup(opts)
       if not tools_const.VALID_TOOLS_MAP[tool] then
         notify.warn(string.format("Unknown tool '%s' in permissions.deny", tool))
       end
+    end
+  end
+
+  -- Validate language configuration
+  if M.options.language then
+    local function validate_lang_code(code, field_name)
+      if code and code ~= "" and code ~= "en" and not language_utils.language_names[code] then
+        notify.warn(string.format(
+          "Unknown language code '%s' in %s. Supported codes: %s",
+          code,
+          field_name,
+          table.concat(vim.tbl_keys(language_utils.language_names), ", ")
+        ))
+      end
+    end
+
+    if type(M.options.language) == "string" then
+      validate_lang_code(M.options.language, "language")
+    elseif type(M.options.language) == "table" then
+      validate_lang_code(M.options.language.default, "language.default")
+      validate_lang_code(M.options.language.chat, "language.chat")
+      validate_lang_code(M.options.language.inline, "language.inline")
     end
   end
 

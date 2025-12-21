@@ -34,6 +34,10 @@ describe("vibing.config", function()
       assert.is_not_nil(config.defaults.permissions.rules)
       assert.is_table(config.defaults.permissions.rules)
     end)
+
+    it("should have language configuration", function()
+      assert.is_nil(config.defaults.language)
+    end)
   end)
 
   describe("setup", function()
