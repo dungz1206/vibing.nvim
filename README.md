@@ -24,7 +24,6 @@ A powerful Neovim plugin that seamlessly integrates **Claude AI** through the Ag
 - [Installation](#-installation)
 - [Usage](#-usage)
 - [Configuration Examples](#️-configuration-examples)
-- [Remote Control](#-remote-control)
 - [Chat File Format](#-chat-file-format)
 - [Architecture](#️-architecture)
 - [Contributing](#-contributing)
@@ -43,7 +42,6 @@ A powerful Neovim plugin that seamlessly integrates **Claude AI** through the Ag
 - **🎯 Smart Context** - Automatic file context detection from open buffers and manual additions
 - **🌍 Multi-language Support** - Configure different languages for chat and inline actions
 - **📊 Diff Viewer** - Visual diff display for AI-edited files with `gd` keybinding
-- **🔌 Remote Control** - Control Neovim instances via `--listen` socket
 - **⚙️ Highly Configurable** - Flexible modes, models, permissions, and UI settings
 
 ## 📦 Installation
@@ -104,28 +102,40 @@ use {
 
 ### User Commands
 
-| Command                               | Description                                            |
-| ------------------------------------- | ------------------------------------------------------ |
-| `:VibingChat`                         | Open chat window                                       |
-| `:VibingContext [path]`               | Add file to context                                    |
-| `:VibingClearContext`                 | Clear all context                                      |
-| `:VibingInline [action\|instruction]` | Run action or custom instruction on selection          |
-| `:VibingExplain`                      | Explain selected code                                  |
-| `:VibingFix`                          | Fix selected code issues                               |
-| `:VibingFeature`                      | Implement feature in selected code                     |
-| `:VibingRefactor`                     | Refactor selected code                                 |
-| `:VibingTest`                         | Generate tests for selected code                       |
-| `:VibingCustom <instruction>`         | Execute custom instruction on code                     |
-| `:VibingCancel`                       | Cancel current request                                 |
-| `:VibingOpenChat <file>`              | Open saved chat file                                   |
-| `:VibingRemote <command>`             | Execute command in remote Neovim (requires `--listen`) |
-| `:VibingRemoteStatus`                 | Show remote Neovim status                              |
-| `:VibingSendToChat`                   | Send file from oil.nvim to chat                        |
-| `:VibingMigrate`                      | Migrate chat files to new format                       |
+| Command                               | Description                                                                       |
+| ------------------------------------- | --------------------------------------------------------------------------------- |
+| `:VibingChat [file]`                  | Open chat window or saved chat file                                               |
+| `:VibingToggleChat`                   | Toggle chat window (open/close)                                                   |
+| `:VibingSlashCommands`                | Show slash command picker in chat                                                 |
+| `:VibingContext [path]`               | Add file to context (or from oil.nvim if no path)                                 |
+| `:VibingClearContext`                 | Clear all context                                                                 |
+| `:VibingInline [action\|instruction]` | Rich UI picker (no args) or direct execution (with args). Tab completion enabled. |
+| `:VibingInlineAction`                 | Alias of `:VibingInline` (for backward compatibility)                             |
+| `:VibingCancel`                       | Cancel current request                                                            |
 
 ### Inline Actions
 
-**Predefined actions:**
+**Rich UI Picker (recommended):**
+
+```vim
+:'<,'>VibingInline
+" Opens a split-panel UI:
+" - Left: Action menu (fix, feat, explain, refactor, test)
+"   Navigate with j/k or arrow keys, Tab to move to input
+" - Right: Additional instruction input (optional)
+"   Shift-Tab to move back to menu
+" - Enter to execute, Esc/Ctrl-c to cancel
+```
+
+**Keybindings:**
+
+- `j`/`k` or `↓`/`↑` - Navigate action menu
+- `Tab` - Move from menu to input field
+- `Shift-Tab` - Move from input field to menu
+- `Enter` - Execute selected action
+- `Esc` or `Ctrl-c` - Cancel
+
+**Direct Execution (with arguments):**
 
 ```vim
 :'<,'>VibingInline fix       " Fix code issues
@@ -133,14 +143,18 @@ use {
 :'<,'>VibingInline explain   " Explain code
 :'<,'>VibingInline refactor  " Refactor code
 :'<,'>VibingInline test      " Generate tests
+
+" With additional instructions
+:'<,'>VibingInline fix using async/await
+:'<,'>VibingInline test with Jest mocks
 ```
 
-**Natural language instructions:**
+**Natural Language Instructions:**
 
 ```vim
 :'<,'>VibingInline "Convert this function to TypeScript"
 :'<,'>VibingInline "Add error handling with try-catch"
-:'<,'>VibingCustom "Optimize this loop for performance"
+:'<,'>VibingInline "Optimize this loop for performance"
 ```
 
 ### Slash Commands (in Chat)
@@ -267,19 +281,6 @@ require("vibing").setup({
   --   inline = "en",   -- Inline actions in English
   -- },
 })
-```
-
-## 🔌 Remote Control
-
-Control Neovim instances via socket:
-
-```bash
-# Start Neovim with remote control
-nvim --listen /tmp/nvim.sock
-
-# In another Neovim instance
-:VibingRemote "edit ~/.config/nvim/init.lua"
-:VibingRemoteStatus
 ```
 
 ## 📝 Chat File Format
