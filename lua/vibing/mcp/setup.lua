@@ -53,10 +53,35 @@ function M.build_mcp_server(callback)
   vim.fn.jobstart(cmd, {
     on_exit = function(_, exit_code)
       if exit_code == 0 then
-        notify.info("MCP server built successfully")
-        if callback then
-          callback(true)
-        end
+        vim.schedule(function()
+          notify.info("MCP server built successfully")
+
+          -- Register MCP server in ~/.claude.json
+          local register_script = plugin_root .. "/bin/register-mcp.mjs"
+          if vim.fn.filereadable(register_script) == 1 then
+            notify.info("Registering MCP server in ~/.claude.json...")
+            vim.fn.jobstart("node " .. vim.fn.shellescape(register_script), {
+              on_exit = function(_, reg_exit_code)
+                vim.schedule(function()
+                  if reg_exit_code == 0 then
+                    notify.info("MCP server registered successfully")
+                  else
+                    notify.warn("MCP registration failed")
+                  end
+                  -- Call callback after registration completes (success or failure)
+                  if callback then
+                    callback(exit_code == 0 and reg_exit_code == 0)
+                  end
+                end)
+              end,
+            })
+          else
+            -- No registration script, call callback immediately
+            if callback then
+              callback(true)
+            end
+          end
+        end)
       else
         notify.error("Failed to build MCP server (exit code: " .. exit_code .. ")")
         if callback then

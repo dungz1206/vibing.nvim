@@ -45,7 +45,18 @@ npm run build --silent
 # Verify build succeeded
 if [ -f "dist/index.js" ]; then
     echo "[vibing.nvim] ✓ MCP server built successfully"
-    exit 0
+
+    # Register MCP server in ~/.claude.json
+    cd "$SCRIPT_DIR"
+    echo "[vibing.nvim] Registering MCP server in ~/.claude.json..."
+    if node bin/register-mcp.mjs; then
+        exit 0
+    else
+        echo "[vibing.nvim] ⚠ Warning: MCP server is built but registration failed"
+        echo "[vibing.nvim] You can manually register by running: node bin/register-mcp.mjs"
+        # Build succeeded but registration failed - still exit 0 since MCP server is functional
+        exit 0
+    fi
 else
     echo "[vibing.nvim] ✗ Build failed: dist/index.js not found"
     exit 1
