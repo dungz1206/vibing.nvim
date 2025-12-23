@@ -10,11 +10,6 @@ describe("vibing.config", function()
   end)
 
   describe("defaults", function()
-    it("should have adapter field", function()
-      assert.is_not_nil(config.defaults.adapter)
-      assert.equals("agent_sdk", config.defaults.adapter)
-    end)
-
     it("should have chat configuration", function()
       assert.is_not_nil(config.defaults.chat)
       assert.is_not_nil(config.defaults.chat.window)
@@ -43,7 +38,6 @@ describe("vibing.config", function()
   describe("setup", function()
     it("should merge user config with defaults", function()
       local user_config = {
-        adapter = "claude",
         chat = {
           window = {
             position = "left",
@@ -55,24 +49,11 @@ describe("vibing.config", function()
       local result = config.get()
 
       -- User values should override defaults
-      assert.equals("claude", result.adapter)
       assert.equals("left", result.chat.window.position)
 
       -- Non-overridden defaults should remain
       assert.is_not_nil(result.agent)
       assert.equals("code", result.agent.default_mode)
-    end)
-
-    it("should handle empty user config", function()
-      config.setup({})
-      local result = config.get()
-      assert.equals("agent_sdk", result.adapter)
-    end)
-
-    it("should handle nil user config", function()
-      config.setup(nil)
-      local result = config.get()
-      assert.equals("agent_sdk", result.adapter)
     end)
 
     it("should warn about invalid tools in permissions", function()
@@ -90,9 +71,13 @@ describe("vibing.config", function()
 
   describe("get", function()
     it("should return current config", function()
-      config.setup({ adapter = "test_adapter" })
+      config.setup({
+        agent = {
+          default_mode = "plan"
+        }
+      })
       local result = config.get()
-      assert.equals("test_adapter", result.adapter)
+      assert.equals("plan", result.agent.default_mode)
     end)
   end)
 end)

@@ -78,15 +78,10 @@ function AgentSDK:build_command(prompt, opts)
     table.insert(cmd, self._session_id)
   end
 
-  -- Add permissions: opts (frontmatter) > config default
-  local vibing = require("vibing")
-  local config = vibing.get_config()
-
+  -- Add permissions: Always use frontmatter (opts) only
+  -- Config is only used as a template when creating new chat files
   local allow_tools = opts.permissions_allow
-  if not allow_tools and config.permissions and config.permissions.allow then
-    allow_tools = config.permissions.allow
-  end
-  -- Add MCP tools for vibing.nvim integration
+  -- Add MCP tools for vibing.nvim integration (always allowed)
   if allow_tools then
     allow_tools = vim.deepcopy(allow_tools)
   else
@@ -100,28 +95,23 @@ function AgentSDK:build_command(prompt, opts)
   end
 
   local deny_tools = opts.permissions_deny
-  if not deny_tools and config.permissions and config.permissions.deny then
-    deny_tools = config.permissions.deny
-  end
   if deny_tools and #deny_tools > 0 then
     table.insert(cmd, "--deny")
     table.insert(cmd, table.concat(deny_tools, ","))
   end
 
-  -- Add permission mode: opts (frontmatter) > config default
+  -- Add permission mode: Use frontmatter only
   local permission_mode = opts.permission_mode
-  if not permission_mode and config.permissions and config.permissions.mode then
-    permission_mode = config.permissions.mode
-  end
   if permission_mode then
     table.insert(cmd, "--permission-mode")
     table.insert(cmd, permission_mode)
   end
 
-  -- Add permission rules: config.permissions.rules
-  if config.permissions and config.permissions.rules and #config.permissions.rules > 0 then
+  -- Add permission rules: Use config only (not supported in frontmatter yet)
+  local rules = self.config.permissions and self.config.permissions.rules
+  if rules and #rules > 0 then
     table.insert(cmd, "--rules")
-    table.insert(cmd, vim.json.encode(config.permissions.rules))
+    table.insert(cmd, vim.json.encode(rules))
   end
 
   table.insert(cmd, "--prompt")
