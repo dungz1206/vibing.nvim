@@ -8,6 +8,7 @@ local Context = require("vibing.context")
 ---@field file_path string?
 ---@field _chunk_buffer string 未フラッシュのチャンクを蓄積するバッファ
 ---@field _chunk_timer any チャンクフラッシュ用のタイマー
+---@field _last_modified_files string[]? 最後に変更されたファイル一覧（プレビューUI用）
 local ChatBuffer = {}
 ChatBuffer.__index = ChatBuffer
 
@@ -22,6 +23,7 @@ function ChatBuffer:new(config)
   instance.file_path = nil
   instance._chunk_buffer = ""
   instance._chunk_timer = nil
+  instance._last_modified_files = nil
   return instance
 end
 
@@ -185,9 +187,26 @@ function ChatBuffer:_setup_keymaps()
     -- ファイルパス上で diff を表示
     vim.keymap.set("n", keymaps.open_diff, function()
       local FilePath = require("vibing.utils.file_path")
-      local GitDiff = require("vibing.utils.git_diff")
       local file_path = FilePath.is_cursor_on_file_path(buf)
       if file_path then
+        -- Modified Filesに含まれているかチェック
+        local modified_files = self:get_last_modified_files()
+        if modified_files and #modified_files > 0 then
+          -- パスを正規化して比較
+          local normalized_cursor = vim.fn.fnamemodify(file_path, ":p")
+          for _, mf in ipairs(modified_files) do
+            local normalized_mf = vim.fn.fnamemodify(mf, ":p")
+            if normalized_mf == normalized_cursor then
+              -- Modified Filesの一部なのでプレビューUIを開く
+              local InlinePreview = require("vibing.ui.inline_preview")
+              local saved_contents = self:get_last_saved_contents()
+              InlinePreview.setup("chat", modified_files, "", saved_contents, file_path)
+              return
+            end
+          end
+        end
+        -- 通常のdiffを表示
+        local GitDiff = require("vibing.utils.git_diff")
         GitDiff.show_diff(file_path)
       end
     end, { buffer = buf, desc = "Open diff for file under cursor" })
@@ -200,6 +219,20 @@ function ChatBuffer:_setup_keymaps()
         FilePath.open_file(file_path)
       end
     end, { buffer = buf, desc = "Open file under cursor" })
+
+    -- Modified Filesセクション内で全ファイルのプレビューUIを表示
+    vim.keymap.set("n", "gp", function()
+      local modified_files = self:get_last_modified_files()
+      if not modified_files or #modified_files == 0 then
+        vim.notify("No modified files to preview", vim.log.levels.WARN)
+        return
+      end
+
+      local InlinePreview = require("vibing.ui.inline_preview")
+      local saved_contents = self:get_last_saved_contents()
+      -- chatモードでプレビューUIを起動（response_textは空、保存内容を渡す）
+      InlinePreview.setup("chat", modified_files, "", saved_contents)
+    end, { buffer = buf, desc = "Preview all modified files" })
 
     vim.keymap.set("n", "q", function()
       self:close()
@@ -739,11 +772,12 @@ function ChatBuffer:_flush_chunks()
   vim.api.nvim_buf_set_lines(self.buf, #lines - 1, #lines, false, chunk_lines)
 
   -- カーソルを最下部に移動
-  if self:is_open() then
+  if self:is_open() and vim.api.nvim_win_is_valid(self.win) and vim.api.nvim_buf_is_valid(self.buf) then
     local new_lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
     local line_count = #new_lines
     if line_count > 0 then
-      vim.api.nvim_win_set_cursor(self.win, { line_count, 0 })
+      -- Safely set cursor with error handling
+      pcall(vim.api.nvim_win_set_cursor, self.win, { line_count, 0 })
     end
   end
 
@@ -831,6 +865,26 @@ function ChatBuffer:update_filename_from_message(message)
   -- バッファ名を更新
   self.file_path = new_file_path
   vim.api.nvim_buf_set_name(self.buf, new_file_path)
+end
+
+---最後に変更されたファイル一覧を設定（プレビューUI用）
+---@param modified_files string[] 変更されたファイルパスの配列
+---@param saved_contents table<string, string[]>? Claude変更前のファイル内容（オプション）
+function ChatBuffer:set_last_modified_files(modified_files, saved_contents)
+  self._last_modified_files = modified_files
+  self._last_saved_contents = saved_contents or {}
+end
+
+---最後に変更されたファイル一覧を取得（プレビューUI用）
+---@return string[]? 変更されたファイル一覧（設定されていない場合はnil）
+function ChatBuffer:get_last_modified_files()
+  return self._last_modified_files
+end
+
+---最後に保存されたファイル内容を取得（プレビューUI用）
+---@return table<string, string[]> Claude変更前のファイル内容
+function ChatBuffer:get_last_saved_contents()
+  return self._last_saved_contents or {}
 end
 
 return ChatBuffer
