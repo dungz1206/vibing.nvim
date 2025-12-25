@@ -100,6 +100,12 @@ The MCP server exposes the following tools to Claude:
 - **nvim_list_buffers** - List all loaded buffers
   - Returns: Array of buffer info (bufnr, name, modified, filetype)
 
+- **nvim_load_buffer** - Load file into buffer without displaying it
+  - `filepath` (required): Absolute or relative path to file
+  - Returns: `{ bufnr, already_loaded }`
+  - Use case: Background loading for LSP operations
+  - Simplifies workflow: replaces `nvim_execute("edit")` + `nvim_execute("bp")`
+
 ### File Information
 
 - **nvim_get_info** - Get current file information
@@ -141,10 +147,65 @@ The MCP server exposes the following tools to Claude:
 - **nvim_focus_window** - Move focus to a specific window
   - `winnr` (required): Window number to focus
 
+- **nvim_win_set_buf** - Set an existing buffer in a specific window
+  - `winnr` (required): Window number
+  - `bufnr` (required): Buffer number to display
+
+- **nvim_win_open_file** - Open a file in a specific window without switching focus
+  - `winnr` (required): Window number
+  - `filepath` (required): Path to file to open
+  - Returns: `{ success, bufnr }`
+
 ### Command Execution
 
 - **nvim_execute** - Execute Neovim command
   - `command` (required): Neovim command string (e.g., "write", "edit foo.txt")
+
+### LSP Operations
+
+- **nvim_lsp_definition** - Get definition location(s) of symbol
+  - `bufnr` (optional): Buffer number (0 for current)
+  - `line` (required): Line number (1-indexed)
+  - `col` (required): Column number (0-indexed)
+  - Returns: `{ locations: [{ uri, range }] }`
+
+- **nvim_lsp_references** - Get all references to symbol
+  - `bufnr` (optional): Buffer number (0 for current)
+  - `line` (required): Line number (1-indexed)
+  - `col` (required): Column number (0-indexed)
+  - Returns: `{ references: [{ uri, range }] }`
+
+- **nvim_lsp_hover** - Get hover information (type, documentation)
+  - `bufnr` (optional): Buffer number (0 for current)
+  - `line` (required): Line number (1-indexed)
+  - `col` (required): Column number (0-indexed)
+  - Returns: `{ contents: "..." }`
+
+- **nvim_diagnostics** - Get diagnostics (errors, warnings) for buffer
+  - `bufnr` (optional): Buffer number (0 for current)
+  - Returns: `{ diagnostics: [{ lnum, col, severity, message, source }] }`
+
+- **nvim_lsp_document_symbols** - Get all symbols in the document
+  - `bufnr` (optional): Buffer number (0 for current)
+  - Returns: `{ symbols: [...] }` (LSP DocumentSymbol array)
+
+- **nvim_lsp_type_definition** - Get type definition location(s)
+  - `bufnr` (optional): Buffer number (0 for current)
+  - `line` (required): Line number (1-indexed)
+  - `col` (required): Column number (0-indexed)
+  - Returns: `{ locations: [{ uri, range }] }`
+
+- **nvim_lsp_call_hierarchy_incoming** - Get incoming calls (callers)
+  - `bufnr` (optional): Buffer number (0 for current)
+  - `line` (required): Line number (1-indexed)
+  - `col` (required): Column number (0-indexed)
+  - Returns: `{ calls: [{ from, fromRanges }] }`
+
+- **nvim_lsp_call_hierarchy_outgoing** - Get outgoing calls (callees)
+  - `bufnr` (optional): Buffer number (0 for current)
+  - `line` (required): Line number (1-indexed)
+  - `col` (required): Column number (0-indexed)
+  - Returns: `{ calls: [{ to, fromRanges }] }`
 
 ## Usage Examples
 
@@ -182,6 +243,66 @@ await use_mcp_tool('vibing-nvim', 'nvim_set_window_size', {
 
 // Focus window 1000
 await use_mcp_tool('vibing-nvim', 'nvim_focus_window', { winnr: 1000 });
+
+// Open file in specific window without switching focus
+await use_mcp_tool('vibing-nvim', 'nvim_win_open_file', {
+  winnr: 1000,
+  filepath: '/path/to/file.txt',
+});
+
+// Set buffer in specific window
+await use_mcp_tool('vibing-nvim', 'nvim_win_set_buf', {
+  winnr: 1000,
+  bufnr: 5,
+});
+
+// Load file into buffer without displaying it (for LSP operations)
+const { bufnr } = await use_mcp_tool('vibing-nvim', 'nvim_load_buffer', {
+  filepath: 'src/logger.ts',
+});
+// Now use bufnr for LSP operations without disrupting user's view
+
+// Get definition of symbol at line 10, column 5
+const definition = await use_mcp_tool('vibing-nvim', 'nvim_lsp_definition', {
+  line: 10,
+  col: 5,
+});
+
+// Get all references to symbol
+const references = await use_mcp_tool('vibing-nvim', 'nvim_lsp_references', {
+  line: 10,
+  col: 5,
+});
+
+// Get hover information (type, documentation)
+const hover = await use_mcp_tool('vibing-nvim', 'nvim_lsp_hover', {
+  line: 10,
+  col: 5,
+});
+
+// Get diagnostics for current buffer
+const diagnostics = await use_mcp_tool('vibing-nvim', 'nvim_diagnostics', {});
+
+// Get all symbols in the document
+const symbols = await use_mcp_tool('vibing-nvim', 'nvim_lsp_document_symbols', {});
+
+// Get type definition
+const typeDef = await use_mcp_tool('vibing-nvim', 'nvim_lsp_type_definition', {
+  line: 10,
+  col: 5,
+});
+
+// Get incoming calls (who calls this function?)
+const incomingCalls = await use_mcp_tool('vibing-nvim', 'nvim_lsp_call_hierarchy_incoming', {
+  line: 10,
+  col: 5,
+});
+
+// Get outgoing calls (what does this function call?)
+const outgoingCalls = await use_mcp_tool('vibing-nvim', 'nvim_lsp_call_hierarchy_outgoing', {
+  line: 10,
+  col: 5,
+});
 ```
 
 ## Development

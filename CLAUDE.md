@@ -105,10 +105,74 @@ When using these tools from Claude Code, prefix them with `mcp__vibing-nvim__`:
 - `mcp__vibing-nvim__nvim_list_tabpages` - List tab pages with their windows
 - `mcp__vibing-nvim__nvim_set_window_size` - Resize window width/height
 - `mcp__vibing-nvim__nvim_focus_window` - Move focus to a specific window
+- `mcp__vibing-nvim__nvim_win_set_buf` - Set an existing buffer in a specific window
+- `mcp__vibing-nvim__nvim_win_open_file` - Open a file in a specific window without switching focus
 
 **Commands:**
 
 - `mcp__vibing-nvim__nvim_execute` - Execute Neovim commands
+
+**LSP Operations:**
+
+- `mcp__vibing-nvim__nvim_lsp_definition` - Get definition location(s) of symbol
+- `mcp__vibing-nvim__nvim_lsp_references` - Get all references to symbol
+- `mcp__vibing-nvim__nvim_lsp_hover` - Get hover information (type, documentation)
+- `mcp__vibing-nvim__nvim_diagnostics` - Get diagnostics (errors, warnings)
+- `mcp__vibing-nvim__nvim_lsp_document_symbols` - Get all symbols in document
+- `mcp__vibing-nvim__nvim_lsp_type_definition` - Get type definition location(s)
+- `mcp__vibing-nvim__nvim_lsp_call_hierarchy_incoming` - Get incoming calls (callers)
+- `mcp__vibing-nvim__nvim_lsp_call_hierarchy_outgoing` - Get outgoing calls (callees)
+
+**Background LSP Analysis Workflow:**
+
+All LSP tools work with ANY loaded buffer, not just the active one. This enables background code analysis without disrupting your current work (e.g., staying in chat while analyzing files).
+
+**Simplified workflow (recommended):**
+
+```javascript
+// 1. Load file into buffer without displaying it
+const { bufnr } = await use_mcp_tool('vibing-nvim', 'nvim_load_buffer', {
+  filepath: 'src/logger.ts',
+});
+
+// 2. Analyze in background (no display disruption!)
+const calls = await use_mcp_tool('vibing-nvim', 'nvim_lsp_call_hierarchy_incoming', {
+  bufnr: bufnr,
+  line: 2,
+  col: 4,
+});
+// You're still in chat, got LSP data without any window switching!
+```
+
+**Legacy workflow (for reference):**
+
+```javascript
+// 1. Load file into buffer (temporarily switches to file)
+await use_mcp_tool('vibing-nvim', 'nvim_execute', { command: 'edit src/logger.ts' });
+
+// 2. Get buffer number (now assigned to logger.ts)
+const info = await use_mcp_tool('vibing-nvim', 'nvim_get_info', {});
+const loggerBufnr = info.bufnr;
+
+// 3. Return to previous buffer (e.g., chat)
+await use_mcp_tool('vibing-nvim', 'nvim_execute', { command: 'bprevious' });
+
+// 4. Analyze logger.ts in background (no need to display it)
+const calls = await use_mcp_tool('vibing-nvim', 'nvim_lsp_call_hierarchy_incoming', {
+  bufnr: loggerBufnr,
+  line: 2,
+  col: 4,
+});
+// You're still in chat, but got LSP data from logger.ts!
+```
+
+**Key Points:**
+
+- Files must be loaded into buffers for LSP analysis (use `:edit` or similar)
+- Once loaded, buffers remain in memory even when not displayed
+- Specify `bufnr` parameter to analyze non-active buffers
+- Use `:bprevious` or `:buffer <bufnr>` to return to your original work
+- LSP server continues analyzing all loaded buffers in background
 
 **Example Usage:**
 
@@ -137,6 +201,18 @@ await use_mcp_tool('vibing-nvim', 'nvim_set_window_size', {
 
 // Focus a specific window
 await use_mcp_tool('vibing-nvim', 'nvim_focus_window', { winnr: 1000 });
+
+// Open file in a specific window without switching focus
+await use_mcp_tool('vibing-nvim', 'nvim_win_open_file', {
+  winnr: 1000,
+  filepath: '/path/to/file.txt',
+});
+
+// Set buffer in a specific window
+await use_mcp_tool('vibing-nvim', 'nvim_win_set_buf', {
+  winnr: 1000,
+  bufnr: 5,
+});
 
 // Execute command
 await use_mcp_tool('vibing-nvim', 'nvim_execute', { command: 'write' });
