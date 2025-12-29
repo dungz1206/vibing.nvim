@@ -1,5 +1,6 @@
 local Context = require("vibing.context")
 local BufferIdentifier = require("vibing.utils.buffer_identifier")
+local Timestamp = require("vibing.utils.timestamp")
 
 ---@class Vibing.ChatBuffer
 ---@field buf number?
@@ -686,6 +687,22 @@ end
 
 ---会話履歴全体を抽出
 ---@return {role: string, content: string}[]
+---セクションの内容を会話配列に追加するヘルパー関数
+---@param conversation table 会話配列
+---@param role string|nil 現在のロール
+---@param content table 内容行の配列
+local function save_section(conversation, role, content)
+  if role and #content > 0 then
+    local content_str = vim.trim(table.concat(content, "\n"))
+    if content_str ~= "" then
+      table.insert(conversation, {
+        role = role,
+        content = content_str
+      })
+    end
+  end
+end
+
 function ChatBuffer:extract_conversation()
   local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
   local conversation = {}
@@ -693,41 +710,20 @@ function ChatBuffer:extract_conversation()
   local current_content = {}
 
   for _, line in ipairs(lines) do
-    if line:match("^## User") then
+    local role = Timestamp.extract_role(line)
+
+    if role == "user" or role == "assistant" then
       -- 前のセクションを保存
-      if current_role and #current_content > 0 then
-        table.insert(conversation, {
-          role = current_role,
-          content = vim.trim(table.concat(current_content, "\n"))
-        })
-      end
-      current_role = "user"
+      save_section(conversation, current_role, current_content)
+      current_role = role
       current_content = {}
-    elseif line:match("^## Assistant") then
-      -- 前のセクションを保存
-      if current_role and #current_content > 0 then
-        table.insert(conversation, {
-          role = current_role,
-          content = vim.trim(table.concat(current_content, "\n"))
-        })
-      end
-      current_role = "assistant"
-      current_content = {}
-    elseif current_role and not line:match("^#") and not line:match("^---") and not line:match("^Context:") then
+    elseif current_role and not Timestamp.is_header(line) and not line:match("^---") and not line:match("^Context:") then
       table.insert(current_content, line)
     end
   end
 
   -- 最後のセクションを保存
-  if current_role and #current_content > 0 then
-    local content = vim.trim(table.concat(current_content, "\n"))
-    if content ~= "" then
-      table.insert(conversation, {
-        role = current_role,
-        content = content
-      })
-    end
-  end
+  save_section(conversation, current_role, current_content)
 
   return conversation
 end
@@ -738,9 +734,10 @@ function ChatBuffer:extract_user_message()
   local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
   local last_user_line = nil
 
-  -- 最後の "## User" 行を見つける（大文字小文字を区別しない）
+  -- 逆順で最後の "## User" 行を見つける
   for i = #lines, 1, -1 do
-    if lines[i]:lower():match("^## user") then
+    local role = Timestamp.extract_role(lines[i])
+    if role == "user" then
       last_user_line = i
       break
     end
@@ -754,8 +751,8 @@ function ChatBuffer:extract_user_message()
   local message_lines = {}
   for i = last_user_line + 1, #lines do
     local line = lines[i]
-    -- 次のセクションに達したら終了
-    if line:match("^## ") or line:match("^---") then
+    -- 次のセクションに達したら終了（タイムスタンプあり/なし両対応）
+    if Timestamp.is_header(line) or line:match("^---") then
       break
     end
     table.insert(message_lines, line)
@@ -774,6 +771,39 @@ function ChatBuffer:extract_user_message()
   end
 
   return table.concat(message_lines, "\n")
+end
+
+---タイムスタンプセパレーターを挿入
+---最後の## Userヘッダーの直前にセパレーターを挿入（Markdown標準形式）
+function ChatBuffer:_insert_timestamp_separator()
+  if not self.buf or not vim.api.nvim_buf_is_valid(self.buf) then
+    return
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
+  local last_user_line = nil
+
+  -- 逆順で最後の "## User" 行を見つける
+  for i = #lines, 1, -1 do
+    local role = Timestamp.extract_role(lines[i])
+    if role == "user" then
+      last_user_line = i
+      break
+    end
+  end
+
+  if not last_user_line then
+    -- ## User が見つからない場合は挿入しない（異常ケース）
+    return
+  end
+
+  -- セパレーターを生成
+  local separator = Timestamp.create_separator()
+
+  -- Markdown標準: セパレーター + 空行 を挿入
+  -- （前の空行は add_user_section() で既に挿入済み、見出しの前には必ず空行が必要）
+  local separator_lines = { separator, "" }
+  vim.api.nvim_buf_set_lines(self.buf, last_user_line - 1, last_user_line - 1, false, separator_lines)
 end
 
 ---メッセージを送信
@@ -799,6 +829,9 @@ function ChatBuffer:send_message()
     end
   end
 
+  -- メッセージ送信前にタイムスタンプセパレーターを挿入
+  self:_insert_timestamp_separator()
+
   -- 通常のメッセージ送信
   require("vibing.actions.chat").send(self, message)
 
@@ -812,10 +845,17 @@ local spinner_frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧",
 ---アシスタントの応答を追加開始
 function ChatBuffer:start_response()
   local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
+
+  -- ユーザーメッセージの末尾の余分な空行を削除
+  while #lines > 0 and lines[#lines] == "" do
+    table.remove(lines, #lines)
+  end
+  vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, lines)
+
+  -- Markdown標準: 空行 + 見出し
   local new_lines = {
     "",
     "## Assistant",
-    "",
   }
   vim.api.nvim_buf_set_lines(self.buf, #lines, #lines, false, new_lines)
   -- StatusManagerがスピナー表示を担当するため、ここではスピナーを開始しない
@@ -903,10 +943,17 @@ function ChatBuffer:add_user_section()
   self:_flush_chunks()
 
   local lines = vim.api.nvim_buf_get_lines(self.buf, 0, -1, false)
+
+  -- アシスタント応答の末尾の余分な空行を削除
+  while #lines > 0 and lines[#lines] == "" do
+    table.remove(lines, #lines)
+  end
+  vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, lines)
+
+  -- Markdown標準: 空行 + 見出し
   local new_lines = {
     "",
     "## User",
-    "",
   }
   vim.api.nvim_buf_set_lines(self.buf, #lines, #lines, false, new_lines)
 
