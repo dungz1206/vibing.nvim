@@ -7,6 +7,57 @@ local commands = require("vibing.application.chat.commands")
 ---引数補完が必要なコマンド（/mode, /model）にも対応
 local M = {}
 
+---説明文を指定文字数で切り詰める
+---表示幅(strwidth)を考慮してマルチバイト文字を正しく扱う
+---@param text string 説明文
+---@param max_length number 最大表示幅
+---@return string 切り詰められた説明文
+local function truncate_description(text, max_length)
+  if not text then
+    return ""
+  end
+  -- 改行を削除してスペースに置換
+  text = text:gsub("\n", " ")
+  -- 連続するスペースを1つに
+  text = text:gsub("%s+", " ")
+  -- 前後の空白を削除
+  text = vim.trim(text)
+
+  -- 最大文字数で切り詰め（マルチバイト対応）
+  if vim.fn.strwidth(text) > max_length then
+    local result = ""
+    local width = 0
+    -- 文字単位でイテレート（マルチバイト文字を正しく扱う）
+    for _, char in vim.str_utf_pos(text) do
+      local char_text = text:sub(char)
+      local char_width = vim.fn.strwidth(char_text)
+      if width + char_width > max_length - 3 then
+        break
+      end
+      result = result .. char_text
+      width = width + char_width
+    end
+    return result .. "..."
+  end
+  return text
+end
+
+---コマンド名からプレフィックス（プラグイン名や名前空間）を分離
+---"plugin-name:command-name" -> { prefix = "plugin-name", name = "command-name" }
+---"namespace:subspace:command" -> { prefix = "namespace:subspace", name = "command" }
+---"simple-command" -> { prefix = "", name = "simple-command" }
+---@param full_name string 完全なコマンド名
+---@return {prefix: string, name: string}
+local function split_command_name(full_name)
+  -- 最後の:で分割（ネストされた名前空間をサポート）
+  local prefix, name = full_name:match("^(.+):([^:]+)$")
+  if prefix and name then
+    return { prefix = prefix, name = name }
+  end
+  -- コロンがない場合はプレフィックスなし
+  return { prefix = "", name = full_name }
+end
+
 ---コマンドピッカーを表示
 ---Telescopeが利用可能ならリッチなピッカー、なければvim.ui.selectを使用
 ---@param chat_buffer? Vibing.ChatBuffer コマンドを挿入するチャットバッファ（nilの場合はブラウズ専用）
@@ -55,20 +106,17 @@ function M._show_native(chat_buffer)
   vim.ui.select(command_list, {
     prompt = "Select slash command:",
     format_item = function(item)
-      local source_tag = ""
-      if item.source == "project" then
-        source_tag = "[project] "
-      elseif item.source == "user" then
-        source_tag = "[user] "
-      elseif item.source == "plugin" then
-        if item.plugin_name then
-          source_tag = string.format("[plugin:%s] ", item.plugin_name)
-        else
-          source_tag = "[plugin] "
-        end
-      end
+      -- コマンド名を分離
+      local split = split_command_name(item.name)
+      local command_name = split.name
+      local prefix = split.prefix
+
+      -- プレフィックスがあれば表示
+      local prefix_display = prefix ~= "" and (prefix .. " ") or ""
+
       local args_indicator = item.requires_args and " <args>" or ""
-      return string.format("%s/%s%s - %s", source_tag, item.name, args_indicator, item.description)
+      local description = truncate_description(item.description, 80)
+      return string.format("%s/%s%s - %s", prefix_display, command_name, args_indicator, description)
     end,
   }, function(choice)
     if choice then
@@ -105,41 +153,33 @@ function M._show_telescope(chat_buffer)
     return a.name < b.name
   end)
 
-  -- エントリーメーカー: 表示フォーマットを定義
+  -- エントリーメーカー: 表示フォーマットを定義（3列構成）
   local displayer = entry_display.create({
     separator = " ",
     items = {
-      { width = 20 },  -- source (increased for plugin names)
-      { width = 25 },  -- command name (with args indicator)
+      { width = 20 },  -- plugin/namespace name
+      { width = 30 },  -- command name (with args indicator)
       { remaining = true },  -- description
     },
   })
 
   local make_display = function(entry)
-    local source_display = ""
-    if entry.source == "builtin" then
-      source_display = "[vibing]"
-    elseif entry.source == "project" then
-      source_display = "[custom:project]"
-    elseif entry.source == "user" then
-      source_display = "[custom:user]"
-    elseif entry.source == "plugin" then
-      if entry.plugin_name then
-        source_display = string.format("[plugin:%s]", entry.plugin_name)
-      else
-        source_display = "[plugin]"
-      end
-    end
+    -- コマンド名を分離（プラグイン名や名前空間を抽出）
+    local split = split_command_name(entry.name)
+    local command_name = split.name
+    local plugin_display = split.prefix
 
-    local command_display = "/" .. entry.name
+    local command_display = "/" .. command_name
     if entry.requires_args then
       command_display = command_display .. " <args>"
     end
 
+    local description = truncate_description(entry.description, 100)
+
     return displayer({
-      { source_display, "TelescopeResultsComment" },
+      { plugin_display, "TelescopeResultsNumber" },
       { command_display, "TelescopeResultsIdentifier" },
-      { entry.description, "TelescopeResultsString" },
+      { description, "TelescopeResultsString" },
     })
   end
 
